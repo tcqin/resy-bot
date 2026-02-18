@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.interval import IntervalTrigger  # used by discovery job
 
 from .config import AppConfig, Target
 from .notifier import Notifier
@@ -175,16 +175,18 @@ class Scheduler:
         job_id = f"poll_{target.venue_id}"
         self._scheduler.add_job(
             self._poll_job,
-            trigger=IntervalTrigger(seconds=target.poll_interval_seconds),
+            # Fire at :00:15, :10:15, :20:15, :30:15, :40:15, :50:15 every hour
+            trigger=CronTrigger(minute="*/10", second=15, timezone="UTC"),
             args=[target, candidate_dates, window_days],
             id=job_id,
             name=f"Poll {target.venue_name}",
             max_instances=1,
+            # Run immediately on startup; subsequent runs follow the cron schedule
+            next_run_time=datetime.now(pytz.utc),
         )
         logger.info(
-            "Scheduled polling job for %s every %ds",
+            "Scheduled polling job for %s — running now, then every 10 min at :X0:15",
             target.venue_name,
-            target.poll_interval_seconds,
         )
 
     # ------------------------------------------------------------------
