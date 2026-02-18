@@ -10,7 +10,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger  # used by discovery job
 
 from .config import AppConfig, Target
-from .notifier import Notifier
 from .resy_client import ResyClient, Slot
 
 logger = logging.getLogger(__name__)
@@ -30,12 +29,10 @@ class Scheduler:
         self,
         client: ResyClient,
         config: AppConfig,
-        notifier: Notifier,
         payment_method_id: int,
     ) -> None:
         self.client = client
         self.config = config
-        self.notifier = notifier
         self.payment_method_id = payment_method_id
         self._scheduler = BackgroundScheduler(timezone="UTC")
         # Single flag: True once any booking succeeds; cancels all remaining jobs
@@ -332,12 +329,6 @@ class Scheduler:
         )
         self._booked = True
         self._cancel_all_jobs()
-
-        try:
-            self.notifier.notify_success(target, slot, confirmation)
-        except Exception as exc:
-            logger.error("Notification failed (booking still succeeded): %s", exc)
-
         return True
 
     def _pick_preferred_slot(

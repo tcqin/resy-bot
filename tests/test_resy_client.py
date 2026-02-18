@@ -68,6 +68,10 @@ FIND_SLOTS_RESPONSE = {
     "results": {
         "venues": [
             {
+                "venue": {
+                    "url_slug": "4-charles-prime-rib",
+                    "location": {"url_slug": "new-york-ny"},
+                },
                 "slots": [
                     {
                         "config": {"token": "cfg-abc"},
@@ -77,11 +81,12 @@ FIND_SLOTS_RESPONSE = {
                         "config": {"token": "cfg-def"},
                         "date": {"start": "2026-03-15 20:00:00"},
                     },
-                ]
+                ],
             }
         ]
     }
 }
+
 
 
 def test_find_slots_returns_slots():
@@ -232,25 +237,100 @@ def test_discover_venue_schedule_api_nested_availability():
 
 
 # ---------------------------------------------------------------------------
-# discover_venue_schedule — page scrape path
+# discover_venue_schedule — template text path
 # ---------------------------------------------------------------------------
 
-def test_discover_venue_schedule_scrape_fallback(monkeypatch):
-    """When venue API gives no window, falls through to page scrape."""
+FIND_RESPONSE_WITH_TEMPLATES = {
+    "results": {
+        "venues": [
+            {
+                "venue": {
+                    "url_slug": "4-charles-prime-rib",
+                    "location": {"url_slug": "new-york-ny"},
+                },
+                "slots": [],
+                "templates": {
+                    "1": {
+                        "content": {
+                            "en-us": {
+                                "need_to_know": {
+                                    "body": "Reservations open 28 days in advance at 9am ET."
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        ]
+    }
+}
+
+
+def test_discover_venue_schedule_template_fallback():
+    """When venue API gives no window, falls through to /4/find template parsing."""
     client = make_client()
 
-    # Venue API returns empty (no window)
-    empty_api = mock_response({})
-    # Scrape returns a parsed result
-    monkeypatch.setattr(
-        client, "_scrape_venue_page", lambda vid, vdata: (30, "09:00")
-    )
+    def fake_get(url, **kwargs):
+        if "/3/venue" in url:
+            return mock_response({})   # no useful data
+        return mock_response(FIND_RESPONSE_WITH_TEMPLATES)
 
-    with patch.object(client.session, "get", return_value=empty_api):
+    with patch.object(client.session, "get", side_effect=fake_get):
         window, release_time = client.discover_venue_schedule(5286, 2)
 
-    assert window == 30
+    assert window == 28
     assert release_time == "09:00"
+
+
+# ---------------------------------------------------------------------------
+# _extract_need_to_know_text
+# ---------------------------------------------------------------------------
+
+def test_extract_need_to_know_text_concatenates_bodies():
+    find_venue = {
+        "templates": {
+            "1": {"content": {"en-us": {"need_to_know": {"body": "Opens 30 days ahead."}}}},
+            "2": {"content": {"en-us": {"need_to_know": {"body": "Available at 9am ET."}}}},
+        }
+    }
+    text = ResyClient._extract_need_to_know_text(find_venue)
+    assert "30 days ahead" in text
+    assert "9am ET" in text
+
+
+def test_extract_need_to_know_text_skips_missing_body():
+    find_venue = {
+        "templates": {
+            "1": {"content": {"en-us": {"need_to_know": {}}}},  # no body key
+            "2": {"content": {"en-us": {"need_to_know": {"body": "Opens at midnight."}}}},
+        }
+    }
+    text = ResyClient._extract_need_to_know_text(find_venue)
+    assert text == "Opens at midnight."
+
+
+def test_extract_need_to_know_text_empty_when_no_templates():
+    assert ResyClient._extract_need_to_know_text({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# _probe_find_venue
+# ---------------------------------------------------------------------------
+
+def test_probe_find_venue_returns_first_venue():
+    client = make_client()
+    with patch.object(client.session, "get", return_value=mock_response(FIND_RESPONSE_WITH_TEMPLATES)):
+        result = client._probe_find_venue(venue_id=834, party_size=2)
+    assert result is not None
+    assert result["venue"]["url_slug"] == "4-charles-prime-rib"
+
+
+def test_probe_find_venue_returns_none_when_no_venues():
+    client = make_client()
+    empty = {"results": {"venues": []}}
+    with patch.object(client.session, "get", return_value=mock_response(empty)):
+        result = client._probe_find_venue(venue_id=834, party_size=2)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -258,32 +338,33 @@ def test_discover_venue_schedule_scrape_fallback(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_discover_venue_schedule_empirical_fallback():
-    """When API and scrape both fail, probes /4/find at decreasing windows."""
+    """When API and templates both give nothing, probes /4/find at decreasing windows."""
     client = make_client()
 
-    # Venue API fails → empirical fallback
     session_get_calls = []
 
     def fake_get(url, **kwargs):
         session_get_calls.append(url)
         if "/3/venue" in url:
             raise Exception("not found")
-        # First find call (60 days): empty; second (45 days): slots present
-        if len([u for u in session_get_calls if "/4/find" in u]) == 1:
+        find_calls = [u for u in session_get_calls if "/4/find" in u]
+        # First 3 find calls are the _probe_find_venue probes (return empty → no templates)
+        # 4th call (empirical, 60 days): empty; 5th call (45 days): slots present
+        if len(find_calls) <= 3:
+            return mock_response({"results": {"venues": []}})
+        if len(find_calls) == 4:
             return mock_response({"results": {"venues": []}})
         return mock_response(FIND_SLOTS_RESPONSE)
 
-    # Suppress scrape step
-    with patch.object(client, "_scrape_venue_page", return_value=(None, None)):
-        with patch.object(client.session, "get", side_effect=fake_get):
-            window, release_time = client.discover_venue_schedule(5286, 2)
+    with patch.object(client.session, "get", side_effect=fake_get):
+        window, release_time = client.discover_venue_schedule(5286, 2)
 
     assert window == 45
     assert release_time is None
 
 
 def test_discover_venue_schedule_all_empty_defaults_to_30():
-    """When nothing is found, defaults to 30 days and None release time."""
+    """When nothing is found anywhere, defaults to 30 days and None release time."""
     client = make_client()
 
     def fake_get(url, **kwargs):
@@ -291,9 +372,8 @@ def test_discover_venue_schedule_all_empty_defaults_to_30():
             raise Exception("API unavailable")
         return mock_response({"results": {"venues": []}})
 
-    with patch.object(client, "_scrape_venue_page", return_value=(None, None)):
-        with patch.object(client.session, "get", side_effect=fake_get):
-            window, release_time = client.discover_venue_schedule(5286, 2)
+    with patch.object(client.session, "get", side_effect=fake_get):
+        window, release_time = client.discover_venue_schedule(5286, 2)
 
     assert window == 30
     assert release_time is None
@@ -337,3 +417,11 @@ def test_parse_release_time_pm():
 
 def test_parse_release_time_none():
     assert ResyClient._parse_release_time("no time mentioned here") is None
+
+
+def test_parse_release_time_uppercase_am():
+    assert ResyClient._parse_release_time("with each new date becoming available at 9 AM.") == "09:00"
+
+
+def test_parse_release_time_uppercase_pm():
+    assert ResyClient._parse_release_time("Reservations open at 6 PM.") == "18:00"

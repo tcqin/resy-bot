@@ -11,7 +11,6 @@ import time
 from dotenv import load_dotenv
 
 from bot.config import load_config
-from bot.notifier import Notifier
 from bot.resy_client import ResyClient
 from bot.scheduler import Scheduler
 
@@ -37,22 +36,15 @@ def main() -> None:
     resy_api_key = _require_env("RESY_API_KEY")
     resy_auth_token = _require_env("RESY_AUTH_TOKEN")
     payment_method_id = int(_require_env("RESY_PAYMENT_METHOD_ID"))
-    smtp_password = _require_env("SMTP_PASSWORD")
 
     config = load_config("config.yaml")
     logger.info("Loaded %d target(s) from config.yaml", len(config.targets))
 
     client = ResyClient(api_key=resy_api_key, auth_token=resy_auth_token)
 
-    notifier = Notifier(
-        notification_config=config.notifications,
-        smtp_password=smtp_password,
-    )
-
     scheduler = Scheduler(
         client=client,
         config=config,
-        notifier=notifier,
         payment_method_id=payment_method_id,
     )
 

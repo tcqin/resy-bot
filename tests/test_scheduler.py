@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from bot.config import AppConfig, EmailConfig, NotificationConfig, Target
+from bot.config import AppConfig, Target
 from bot.resy_client import Slot
 from bot.scheduler import Scheduler
 
@@ -31,23 +31,12 @@ def make_target(**overrides) -> Target:
     return Target(**{**defaults, **overrides})
 
 
-def make_scheduler(targets=None, client=None, notifier=None) -> Scheduler:
+def make_scheduler(targets=None, client=None) -> Scheduler:
     if targets is None:
         targets = [make_target()]
-    cfg = AppConfig(
-        targets=targets,
-        notifications=NotificationConfig(
-            email=EmailConfig(
-                smtp_server="smtp.gmail.com",
-                smtp_port=587,
-                from_address="a@example.com",
-                to_address="b@example.com",
-            ),
-        ),
-    )
+    cfg = AppConfig(targets=targets)
     client = client or MagicMock()
-    notifier = notifier or MagicMock()
-    sched = Scheduler(client=client, config=cfg, notifier=notifier, payment_method_id=42)
+    sched = Scheduler(client=client, config=cfg, payment_method_id=42)
     # Prevent the real APScheduler from starting
     sched._scheduler = MagicMock()
     return sched
@@ -184,13 +173,12 @@ def test_pick_preferred_slot_boundary_included():
 
 def test_attempt_booking_success():
     client = MagicMock()
-    notifier = MagicMock()
     client.find_slots.return_value = [make_slot("19:00")]
     client.get_booking_token.return_value = "btoken-123"
     client.book.return_value = {"resy_token": "RES-456"}
 
     target = make_target(time_center="19:00", time_radius_minutes=30)
-    sched = make_scheduler(targets=[target], client=client, notifier=notifier)
+    sched = make_scheduler(targets=[target], client=client)
 
     result = sched._attempt_booking(target, "2026-03-15")
 
@@ -198,7 +186,6 @@ def test_attempt_booking_success():
     assert sched._booked is True
     client.get_booking_token.assert_called_once_with("cfg-1", "2026-03-15", 2)
     client.book.assert_called_once_with("btoken-123", 42)
-    notifier.notify_success.assert_called_once()
 
 
 def test_attempt_booking_no_preferred_slots():
@@ -243,22 +230,20 @@ def test_attempt_booking_book_error():
     assert sched._booked is False
 
 
-def test_attempt_booking_notification_failure_does_not_unbook():
-    """A notification error must not undo a successful booking."""
+def test_attempt_booking_book_error_leaves_unbooked():
+    """A book() error must leave _booked as False."""
     client = MagicMock()
-    notifier = MagicMock()
     client.find_slots.return_value = [make_slot("19:00")]
     client.get_booking_token.return_value = "btoken"
-    client.book.return_value = {"resy_token": "RES-1"}
-    notifier.notify_success.side_effect = Exception("SMTP down")
+    client.book.side_effect = Exception("payment failed again")
 
     target = make_target(time_center="19:00")
-    sched = make_scheduler(targets=[target], client=client, notifier=notifier)
+    sched = make_scheduler(targets=[target], client=client)
 
     result = sched._attempt_booking(target, "2026-03-15")
 
-    assert result is True
-    assert sched._booked is True
+    assert result is False
+    assert sched._booked is False
 
 
 def test_attempt_booking_cancels_all_jobs_on_success():

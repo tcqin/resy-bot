@@ -48,20 +48,8 @@ class Target(BaseModel):
         return v
 
 
-class EmailConfig(BaseModel):
-    smtp_server: str
-    smtp_port: int
-    from_address: str
-    to_address: str
-
-
-class NotificationConfig(BaseModel):
-    email: EmailConfig
-
-
 class AppConfig(BaseModel):
     targets: list[Target]
-    notifications: NotificationConfig
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:

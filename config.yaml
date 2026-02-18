@@ -1,6 +1,6 @@
 targets:
-  - venue_id: 79460
-    venue_name: "Penny"
+  - venue_id: 834
+    venue_name: "Four Charles"
     party_size: 2
     start_date: "2026-03-01"
     end_date: "2026-04-23"
@@ -12,10 +12,3 @@ targets:
     time_radius_minutes: 30
     venue_timezone: "America/New_York"
     poll_interval_seconds: 600
-
-notifications:
-  email:
-    smtp_server: "smtp.gmail.com"
-    smtp_port: 587
-    from_address: "tianchengq@gmail.com"
-    to_address: "tianchengq@gmail.com"

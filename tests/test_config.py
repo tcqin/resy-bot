@@ -94,12 +94,6 @@ MINIMAL_YAML = textwrap.dedent("""\
         time_center: "19:00"
         time_radius_minutes: 30
         poll_interval_seconds: 30
-    notifications:
-      email:
-        smtp_server: "smtp.gmail.com"
-        smtp_port: 587
-        from_address: "a@example.com"
-        to_address: "b@example.com"
 """)
 
 
@@ -111,7 +105,6 @@ def test_load_config(tmp_path: Path):
     assert len(cfg.targets) == 1
     assert cfg.targets[0].venue_name == "Test Venue"
     assert cfg.targets[0].days_of_week == ["Tuesday", "Thursday"]
-    assert cfg.notifications.email.smtp_server == "smtp.gmail.com"
 
 
 def test_load_config_missing_file():

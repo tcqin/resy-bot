@@ -135,7 +135,7 @@ class ResyClient:
 
         Discovery order:
           1. Resy venue API  (``GET /3/venue``)
-          2. Resy website page scrape (text parsing for human-readable schedules)
+          2. /4/find ``need_to_know`` template text parsing
           3. Empirical ``/4/find`` probing at increasing look-ahead windows
         """
         result = self._discover_venue_schedule_inner(venue_id, party_size)
@@ -180,17 +180,22 @@ class ResyClient:
             logger.debug("Venue API probe failed for %s: %s", venue_id, exc)
 
         # ------------------------------------------------------------------ #
-        # Step 2 — scrape the Resy venue page for human-readable schedule     #
+        # Step 2 — parse need_to_know template text from /4/find             #
         # ------------------------------------------------------------------ #
-        scrape_window, scrape_time = self._scrape_venue_page(venue_id, venue_data)
-        if scrape_window is not None or scrape_time is not None:
-            logger.info(
-                "Page scrape: discovered window=%s days, release_time=%s for venue %s",
-                scrape_window,
-                scrape_time or "unknown",
-                venue_id,
-            )
-            return scrape_window or 30, scrape_time
+        find_venue = self._probe_find_venue(venue_id, party_size)
+        if find_venue is not None:
+            text = self._extract_need_to_know_text(find_venue)
+            if text:
+                template_window = self._parse_window_days(text)
+                template_time = self._parse_release_time(text)
+                if template_window is not None or template_time is not None:
+                    logger.info(
+                        "Template text: discovered window=%s days, release_time=%s for venue %s",
+                        template_window,
+                        template_time or "unknown",
+                        venue_id,
+                    )
+                    return template_window or 30, template_time
 
         # ------------------------------------------------------------------ #
         # Step 3 — empirical /4/find probing                                  #
@@ -220,57 +225,51 @@ class ResyClient:
     # Internal helpers                                                         #
     # ---------------------------------------------------------------------- #
 
-    def _scrape_venue_page(
-        self, venue_id: int, venue_data: dict
-    ) -> tuple[int | None, str | None]:
-        """Fetch the venue's resy.com page and parse booking schedule from text.
+    def _probe_find_venue(self, venue_id: int, party_size: int) -> dict | None:
+        """Make a /4/find request and return the first venue dict, or None.
 
-        Returns ``(window_days, release_time_hhmm)``; either value may be
-        ``None`` if not found.  ``release_time_hhmm`` is in 24-hour format.
+        Tries dates at 7, 14, and 30 days out so that at least one probe
+        falls within the booking window even for venues with short windows.
         """
-        venue_url = self._build_venue_url(venue_id, venue_data)
-        if not venue_url:
-            logger.debug("Cannot build venue URL for %s — skipping page scrape", venue_id)
-            return None, None
+        today = date.today()
+        for days_out in [7, 14, 30]:
+            probe_date = today + timedelta(days=days_out)
+            try:
+                params = {
+                    "lat": 0,
+                    "long": 0,
+                    "day": probe_date.isoformat(),
+                    "party_size": party_size,
+                    "venue_id": venue_id,
+                }
+                resp = self.session.get(f"{BASE_URL}/4/find", params=params, timeout=10)
+                resp.raise_for_status()
+                venues = resp.json().get("results", {}).get("venues", [])
+                if venues:
+                    return venues[0]
+            except Exception as exc:
+                logger.debug("Find probe at %d days failed for venue %s: %s", days_out, venue_id, exc)
+        return None
 
-        try:
-            resp = requests.get(
-                venue_url,
-                timeout=10,
-                headers={"User-Agent": self.session.headers.get("User-Agent", "")},
+    @staticmethod
+    def _extract_need_to_know_text(find_venue: dict) -> str:
+        """Concatenate all need_to_know body strings from a /4/find venue dict.
+
+        The templates field is a dict of string-keyed dicts:
+          templates["1"]["content"]["en-us"]["need_to_know"]["body"]
+        """
+        bodies: list[str] = []
+        for template in find_venue.get("templates", {}).values():
+            body = (
+                template
+                .get("content", {})
+                .get("en-us", {})
+                .get("need_to_know", {})
+                .get("body", "")
             )
-            resp.raise_for_status()
-            text = resp.text.lower()
-        except Exception as exc:
-            logger.debug("Page scrape request failed for %s: %s", venue_url, exc)
-            return None, None
-
-        window_days = self._parse_window_days(text)
-        release_time = self._parse_release_time(text)
-        return window_days, release_time
-
-    def _build_venue_url(self, venue_id: int, venue_data: dict) -> str | None:
-        """Construct the resy.com venue page URL from venue API data or fall back
-        to the venue_id query-param form."""
-        # Prefer a full URL from the API response if present
-        direct_url = venue_data.get("url") or venue_data.get("venue_url")
-        if direct_url:
-            return direct_url
-
-        # Try to construct from city code + slug
-        location = venue_data.get("location") or {}
-        city = location.get("city_code") or location.get("city") or ""
-        slug = (
-            venue_data.get("url_slug")
-            or venue_data.get("slug")
-            or venue_data.get("venue_slug")
-            or ""
-        )
-        if city and slug:
-            return f"https://resy.com/cities/{city.lower()}/{slug}"
-
-        # Last resort: numeric-ID-based URL (may redirect)
-        return f"https://resy.com/venues/{venue_id}"
+            if body:
+                bodies.append(body)
+        return " ".join(bodies)
 
     @staticmethod
     def _parse_window_days(text: str) -> int | None:
@@ -305,20 +304,24 @@ class ResyClient:
           - "reservations released at 12:00am"
         """
         # Handle "midnight" and "noon" shorthands
-        if re.search(r"(?:opens?|releases?|available|drops?)\s+at\s+midnight", text):
+        if re.search(r"(?:opens?|releases?|available|drops?)\s+at\s+midnight", text, re.IGNORECASE):
             return "00:00"
-        if re.search(r"(?:opens?|releases?|available|drops?)\s+at\s+noon", text):
+        if re.search(r"(?:opens?|releases?|available|drops?)\s+at\s+noon", text, re.IGNORECASE):
             return "12:00"
 
-        # Generic HH[:MM] am/pm pattern
+        # Generic HH[:MM] am/pm pattern preceded by a keyword
         m = re.search(
             r"(?:opens?|releases?|available|drops?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)",
             text,
+            re.IGNORECASE,
         )
+        # Fallback: any "at Xam/pm" in the text (covers "30 days in advance at 9am ET")
+        if not m:
+            m = re.search(r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", text, re.IGNORECASE)
         if m:
             hour = int(m.group(1))
             minute = int(m.group(2) or 0)
-            ampm = m.group(3)
+            ampm = m.group(3).lower()
             if ampm == "pm" and hour != 12:
                 hour += 12
             elif ampm == "am" and hour == 12:
