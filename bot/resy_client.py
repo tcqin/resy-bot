@@ -117,6 +117,17 @@ class ResyClient:
           2. Resy website page scrape (text parsing for human-readable schedules)
           3. Empirical ``/4/find`` probing at increasing look-ahead windows
         """
+        result = self._discover_venue_schedule_inner(venue_id, party_size)
+        window_days, release_time = result
+        print(
+            f"[venue {venue_id}] Booking window: {window_days} days | "
+            f"Release time: {release_time if release_time is not None else 'unknown'}"
+        )
+        return result
+
+    def _discover_venue_schedule_inner(
+        self, venue_id: int, party_size: int
+    ) -> tuple[int, str | None]:
         # ------------------------------------------------------------------ #
         # Step 1 — venue API                                                   #
         # ------------------------------------------------------------------ #
