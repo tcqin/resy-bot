@@ -1,16 +1,17 @@
 targets:
-  - venue_id: 28460
-    venue_name: "Nonono"
+  - venue_id: 79460
+    venue_name: "Penny"
     party_size: 2
     start_date: "2026-03-01"
-    end_date: "2026-04-30"
+    end_date: "2026-04-23"
     days_of_week:
       - "Tuesday"
+      - "Wednesday"
       - "Thursday"
     time_center: "19:00"
     time_radius_minutes: 30
     venue_timezone: "America/New_York"
-    poll_interval_seconds: 60
+    poll_interval_seconds: 600
 
 notifications:
   email:
