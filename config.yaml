@@ -1,0 +1,29 @@
+targets:
+  # Example: midnight drop at Carbone (reservations open at midnight 30 days out)
+  # - venue_id: 5286
+  #   venue_name: "Carbone"
+  #   date: "2026-03-15"
+  #   party_size: 2
+  #   time_preferences:
+  #     - "19:00"   # Most preferred — bot books this first if available
+  #    - "19:30"
+  #     - "20:00"
+  #   release_time: "00:00"        # Set to the drop time (HH:MM). Omit or set null for day polling.
+  #   poll_interval_seconds: 30    # Used for day-polling mode; snipe mode uses 0.5s burst instead
+
+  # Example: daytime polling (no midnight drop — omit release_time or set to null)
+  - venue_id: 28460
+    venue_name: "Nonono"
+    date: "2026-02-23"
+    party_size: 2
+    time_preferences:
+      - "19:00"
+    release_time: null
+    poll_interval_seconds: 60
+
+notifications:
+  email:
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    from_address: "tianchengq@gmail.com"
+    to_address: "tianchengq@gmail.com"
