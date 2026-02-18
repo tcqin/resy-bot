@@ -30,14 +30,20 @@ def make_target() -> Target:
     return Target(
         venue_id=5286,
         venue_name="Carbone",
-        date="2026-03-15",
+        start_date="2026-03-01",
+        end_date="2026-04-30",
         party_size=2,
-        time_preferences=["19:00"],
+        days_of_week=["Tuesday"],
+        time_center="19:00",
     )
 
 
-def make_slot() -> Slot:
-    return Slot(config_id="cfg-1", start_time=datetime(2026, 3, 15, 19, 0))
+def make_slot(date_str: str = "2026-03-15") -> Slot:
+    year, month, day = date_str.split("-")
+    return Slot(
+        config_id="cfg-1",
+        start_time=datetime(int(year), int(month), int(day), 19, 0),
+    )
 
 
 def make_notifier(cfg=None) -> Notifier:
@@ -63,7 +69,7 @@ def test_notify_success_sends_email():
     smtp_class, smtp_instance = mock_smtp_context()
 
     with patch("bot.notifier.smtplib.SMTP", smtp_class):
-        notifier.notify_success(make_target(), make_slot(), {"resy_token": "RES-999"})
+        notifier.notify_success(make_target(), make_slot("2026-03-15"), {"resy_token": "RES-999"})
 
     smtp_instance.starttls.assert_called_once()
     smtp_instance.login.assert_called_once_with("from@example.com", "secret")
@@ -72,9 +78,21 @@ def test_notify_success_sends_email():
     assert sendmail_args[1] == ["to@example.com"]
     body = sendmail_args[2]
     assert "Carbone" in body
-    assert "2026-03-15" in body
     assert "19:00" in body
     assert "RES-999" in body
+
+
+def test_notify_success_date_derived_from_slot():
+    """The booking date in the email comes from slot.start_time, not target fields."""
+    notifier = make_notifier()
+    smtp_class, smtp_instance = mock_smtp_context()
+    slot = make_slot("2026-03-17")  # a specific date encoded in the slot
+
+    with patch("bot.notifier.smtplib.SMTP", smtp_class):
+        notifier.notify_success(make_target(), slot, {"resy_token": "X"})
+
+    body = smtp_instance.sendmail.call_args[0][2]
+    assert "2026-03-17" in body
 
 
 def test_notify_success_fallback_confirmation_key():

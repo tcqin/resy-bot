@@ -168,3 +168,145 @@ def test_book_sends_correct_payload():
     payload = kwargs["data"]
     assert payload["book_token"] == "btoken-xyz"
     assert payload["struct_payment_method"] == '{"id":42}'
+
+
+# ---------------------------------------------------------------------------
+# discover_venue_schedule — venue API path
+# ---------------------------------------------------------------------------
+
+def test_discover_venue_schedule_api_returns_window_and_time():
+    """When the venue API returns booking_window_days and booking_start_time, use them."""
+    client = make_client()
+    api_data = {"booking_window_days": 28, "booking_start_time": "09:00"}
+    with patch.object(client.session, "get", return_value=mock_response(api_data)):
+        window, release_time = client.discover_venue_schedule(venue_id=5286, party_size=2)
+    assert window == 28
+    assert release_time == "09:00"
+
+
+def test_discover_venue_schedule_api_window_only():
+    """When only booking_window_days is present, release_time is None."""
+    client = make_client()
+    api_data = {"booking_window_days": 30}
+    with patch.object(client.session, "get", return_value=mock_response(api_data)):
+        window, release_time = client.discover_venue_schedule(5286, 2)
+    assert window == 30
+    assert release_time is None
+
+
+def test_discover_venue_schedule_api_nested_availability():
+    """Handles booking_window_days nested inside an 'availability' key."""
+    client = make_client()
+    api_data = {"availability": {"booking_window_days": 21, "booking_start_time": "00:00"}}
+    with patch.object(client.session, "get", return_value=mock_response(api_data)):
+        window, release_time = client.discover_venue_schedule(5286, 2)
+    assert window == 21
+    assert release_time == "00:00"
+
+
+# ---------------------------------------------------------------------------
+# discover_venue_schedule — page scrape path
+# ---------------------------------------------------------------------------
+
+def test_discover_venue_schedule_scrape_fallback(monkeypatch):
+    """When venue API gives no window, falls through to page scrape."""
+    client = make_client()
+
+    # Venue API returns empty (no window)
+    empty_api = mock_response({})
+    # Scrape returns a parsed result
+    monkeypatch.setattr(
+        client, "_scrape_venue_page", lambda vid, vdata: (30, "09:00")
+    )
+
+    with patch.object(client.session, "get", return_value=empty_api):
+        window, release_time = client.discover_venue_schedule(5286, 2)
+
+    assert window == 30
+    assert release_time == "09:00"
+
+
+# ---------------------------------------------------------------------------
+# discover_venue_schedule — empirical fallback
+# ---------------------------------------------------------------------------
+
+def test_discover_venue_schedule_empirical_fallback():
+    """When API and scrape both fail, probes /4/find at decreasing windows."""
+    client = make_client()
+
+    # Venue API fails → empirical fallback
+    session_get_calls = []
+
+    def fake_get(url, **kwargs):
+        session_get_calls.append(url)
+        if "/3/venue" in url:
+            raise Exception("not found")
+        # First find call (60 days): empty; second (45 days): slots present
+        if len([u for u in session_get_calls if "/4/find" in u]) == 1:
+            return mock_response({"results": {"venues": []}})
+        return mock_response(FIND_SLOTS_RESPONSE)
+
+    # Suppress scrape step
+    with patch.object(client, "_scrape_venue_page", return_value=(None, None)):
+        with patch.object(client.session, "get", side_effect=fake_get):
+            window, release_time = client.discover_venue_schedule(5286, 2)
+
+    assert window == 45
+    assert release_time is None
+
+
+def test_discover_venue_schedule_all_empty_defaults_to_30():
+    """When nothing is found, defaults to 30 days and None release time."""
+    client = make_client()
+
+    def fake_get(url, **kwargs):
+        if "/3/venue" in url:
+            raise Exception("API unavailable")
+        return mock_response({"results": {"venues": []}})
+
+    with patch.object(client, "_scrape_venue_page", return_value=(None, None)):
+        with patch.object(client.session, "get", side_effect=fake_get):
+            window, release_time = client.discover_venue_schedule(5286, 2)
+
+    assert window == 30
+    assert release_time is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_window_days / _parse_release_time
+# ---------------------------------------------------------------------------
+
+def test_parse_window_days_in_advance():
+    assert ResyClient._parse_window_days("reservations open 30 days in advance") == 30
+
+
+def test_parse_window_days_ahead():
+    assert ResyClient._parse_window_days("books up to 28 days ahead") == 28
+
+
+def test_parse_window_days_none():
+    assert ResyClient._parse_window_days("no relevant text here") is None
+
+
+def test_parse_release_time_midnight():
+    assert ResyClient._parse_release_time("releases at midnight et") == "00:00"
+
+
+def test_parse_release_time_noon():
+    assert ResyClient._parse_release_time("available at noon") == "12:00"
+
+
+def test_parse_release_time_9am():
+    assert ResyClient._parse_release_time("opens at 9am") == "09:00"
+
+
+def test_parse_release_time_with_minutes():
+    assert ResyClient._parse_release_time("drops at 9:30am et") == "09:30"
+
+
+def test_parse_release_time_pm():
+    assert ResyClient._parse_release_time("releases at 1:00pm") == "13:00"
+
+
+def test_parse_release_time_none():
+    assert ResyClient._parse_release_time("no time mentioned here") is None

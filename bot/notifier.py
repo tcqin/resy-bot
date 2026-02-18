@@ -22,11 +22,12 @@ class Notifier:
     def notify_success(self, target: Target, slot: Slot, confirmation: dict) -> None:
         """Send email confirming a successful booking."""
         resy_id = confirmation.get("resy_token") or confirmation.get("reservation_id") or "N/A"
-        subject = f"Reservation booked: {target.venue_name} on {target.date}"
+        date_str = slot.start_time.strftime("%Y-%m-%d")
+        subject = f"Reservation booked: {target.venue_name} on {date_str}"
         body = (
             f"Your reservation has been booked!\n\n"
             f"Venue:        {target.venue_name}\n"
-            f"Date:         {target.date}\n"
+            f"Date:         {date_str}\n"
             f"Time:         {slot.start_time.strftime('%H:%M')}\n"
             f"Party size:   {target.party_size}\n"
             f"Confirmation: {resy_id}\n"
@@ -57,4 +58,3 @@ class Notifier:
         except Exception as exc:
             logger.error("Failed to send email: %s", exc)
             raise
-
