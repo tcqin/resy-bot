@@ -346,10 +346,10 @@ def test_poll_job_stops_after_successful_booking():
 # _discovery_job
 # ---------------------------------------------------------------------------
 
-def test_discovery_job_schedules_snipes_when_slots_appear():
-    """When slots appear for the first time, snipe jobs should be scheduled."""
+def test_discovery_job_schedules_snipes_when_date_appears_on_calendar():
+    """When a date first appears on the calendar, snipe jobs should be scheduled."""
     client = MagicMock()
-    client.find_slots.return_value = [make_slot("19:00")]
+    client.is_date_on_calendar.return_value = True  # date is now on calendar
 
     target = make_target(
         start_date="2026-03-01",
@@ -358,7 +358,7 @@ def test_discovery_job_schedules_snipes_when_slots_appear():
         venue_timezone="America/New_York",
     )
     sched = make_scheduler(targets=[target], client=client)
-    sched._discovery_prev_had_slots[target.venue_id] = False  # no slots before
+    sched._discovery_prev_on_calendar[target.venue_id] = False  # was not on calendar before
 
     candidate_dates = [date(2026, 3, 3), date(2026, 3, 10)]
     # Mock today far in the past so release days (candidate - 30d) are in the future
@@ -373,14 +373,29 @@ def test_discovery_job_schedules_snipes_when_slots_appear():
     assert sched._scheduler.add_job.called
 
 
-def test_discovery_job_no_action_when_slots_were_already_present():
-    """If slots were already there last check, no new snipes should be scheduled."""
+def test_discovery_job_no_action_when_date_already_on_calendar():
+    """If the date was already on the calendar last check, no new snipes should be scheduled."""
     client = MagicMock()
-    client.find_slots.return_value = [make_slot("19:00")]
+    client.is_date_on_calendar.return_value = True
 
     target = make_target()
     sched = make_scheduler(targets=[target], client=client)
-    sched._discovery_prev_had_slots[target.venue_id] = True  # already had slots
+    sched._discovery_prev_on_calendar[target.venue_id] = True  # already on calendar
+
+    candidate_dates = [date(2026, 3, 3)]
+    sched._discovery_job(target, 30, candidate_dates)
+
+    sched._scheduler.add_job.assert_not_called()
+
+
+def test_discovery_job_no_action_when_date_not_on_calendar():
+    """If the date still isn't on the calendar, no snipes should be scheduled."""
+    client = MagicMock()
+    client.is_date_on_calendar.return_value = False  # date not yet on calendar
+
+    target = make_target()
+    sched = make_scheduler(targets=[target], client=client)
+    sched._discovery_prev_on_calendar[target.venue_id] = False
 
     candidate_dates = [date(2026, 3, 3)]
     sched._discovery_job(target, 30, candidate_dates)

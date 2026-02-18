@@ -34,6 +34,33 @@ def test_client_sets_auth_headers():
 
 
 # ---------------------------------------------------------------------------
+# is_date_on_calendar
+# ---------------------------------------------------------------------------
+
+def test_is_date_on_calendar_true_when_venue_present():
+    """Returns True when the venue appears in results, even with no slots."""
+    client = make_client()
+    data = {"results": {"venues": [{"slots": []}]}}  # venue present, fully booked
+    with patch.object(client.session, "get", return_value=mock_response(data)):
+        assert client.is_date_on_calendar(5286, "2026-03-15", 2) is True
+
+
+def test_is_date_on_calendar_true_with_available_slots():
+    """Returns True when the venue has open slots."""
+    client = make_client()
+    with patch.object(client.session, "get", return_value=mock_response(FIND_SLOTS_RESPONSE)):
+        assert client.is_date_on_calendar(5286, "2026-03-15", 2) is True
+
+
+def test_is_date_on_calendar_false_when_no_venues():
+    """Returns False when date is outside the booking window (no venues returned)."""
+    client = make_client()
+    data = {"results": {"venues": []}}
+    with patch.object(client.session, "get", return_value=mock_response(data)):
+        assert client.is_date_on_calendar(5286, "2026-03-15", 2) is False
+
+
+# ---------------------------------------------------------------------------
 # find_slots
 # ---------------------------------------------------------------------------
 

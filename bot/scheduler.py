@@ -41,8 +41,9 @@ class Scheduler:
         # Single flag: True once any booking succeeds; cancels all remaining jobs
         self._booked: bool = False
         # Tracks whether the discovery probe found slots on the previous check
-        # (keyed by venue_id so multi-target configs work)
-        self._discovery_prev_had_slots: dict[int, bool] = {}
+        # Tracks whether the probe date was on the calendar on the previous
+        # discovery check (keyed by venue_id so multi-target configs work)
+        self._discovery_prev_on_calendar: dict[int, bool] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -153,7 +154,7 @@ class Scheduler:
         window_days: int,
         candidate_dates: list[date],
     ) -> None:
-        self._discovery_prev_had_slots[target.venue_id] = False
+        self._discovery_prev_on_calendar[target.venue_id] = False
         job_id = f"discover_{target.venue_id}"
         self._scheduler.add_job(
             self._discovery_job,
@@ -232,29 +233,35 @@ class Scheduler:
     def _discovery_job(
         self, target: Target, window_days: int, candidate_dates: list[date]
     ) -> None:
-        """Probe for slots at window_days out; when they appear, infer release
-        time and schedule snipe jobs for all remaining candidate dates."""
+        """Probe whether the next candidate date has appeared on the calendar.
+
+        Resy shows a date on the calendar (with 0 available slots) the moment
+        reservations are released — slots may already be gone.  So we track
+        whether the probe date is *on the calendar at all*, not whether it has
+        open slots.  The first time it appears is our inferred release time.
+        """
         if self._booked:
             return
         today = date.today()
         probe_date = today + timedelta(days=window_days)
         try:
-            slots = self.client.find_slots(
+            on_calendar = self.client.is_date_on_calendar(
                 target.venue_id, probe_date.isoformat(), target.party_size
             )
         except Exception as exc:
             logger.debug("Discovery probe failed for %s: %s", target.venue_name, exc)
             return
 
-        prev_had = self._discovery_prev_had_slots.get(target.venue_id, False)
-        self._discovery_prev_had_slots[target.venue_id] = bool(slots)
+        prev_on_calendar = self._discovery_prev_on_calendar.get(target.venue_id, False)
+        self._discovery_prev_on_calendar[target.venue_id] = on_calendar
 
-        if slots and not prev_had:
+        if on_calendar and not prev_on_calendar:
             tz = pytz.timezone(target.venue_timezone)
             now_local = datetime.now(tz)
             inferred_release_time = f"{now_local.hour:02d}:00"
             logger.info(
-                "Discovery: slots appeared for %s at ~%s local — scheduling snipes",
+                "Discovery: %s appeared on calendar for %s at ~%s local — scheduling snipes",
+                probe_date,
                 target.venue_name,
                 inferred_release_time,
             )

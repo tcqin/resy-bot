@@ -40,6 +40,27 @@ class ResyClient:
             }
         )
 
+    def is_date_on_calendar(self, venue_id: int, date: str, party_size: int) -> bool:
+        """Return True if the venue appears in /4/find results for date.
+
+        A venue appearing means the date is within the booking window, even if
+        all slots are already taken.  This is the right signal for release-time
+        discovery — a new date appearing on the calendar (fully booked or not)
+        marks the moment reservations were released.
+        """
+        params = {
+            "lat": 0,
+            "long": 0,
+            "day": date,
+            "party_size": party_size,
+            "venue_id": venue_id,
+        }
+        resp = self.session.get(f"{BASE_URL}/4/find", params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        venues = data.get("results", {}).get("venues", [])
+        return len(venues) > 0
+
     def find_slots(self, venue_id: int, date: str, party_size: int) -> list[Slot]:
         """GET /4/find — returns available slots for the venue/date/party_size."""
         params = {
